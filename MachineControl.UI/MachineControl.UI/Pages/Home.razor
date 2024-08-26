@@ -1,0 +1,118 @@
+﻿@page "/"
+@using System.Text.Json
+@using MachineControl.UI.Dtos
+@using MachineControl.UI.Enums
+@using Microsoft.AspNetCore.SignalR.Client
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+
+
+<h3>Lighter</h3>
+
+@if (_httpResponseError)
+{
+    <div class="alert alert-danger">
+        <p>An error occured @(_error)</p>
+    </div>
+}
+else
+{
+<div>
+    <p>Status: @(_lightData?.LightStatus)</p>
+    <svg height="100" width="100">
+        <circle cx="50" cy="50" r="40" 
+                stroke-width="0" 
+                fill="@GetCircleColor()" />
+    </svg>
+</div>
+
+    <button @onclick="ToggleStatus" class="btn btn-primary">Toggle status</button>
+}
+
+
+@code
+{
+    private LightData? _lightData;
+    private bool _httpResponseError;
+    private string? _error;
+    private HubConnection? _hubConnection;
+    private const string StatusUri = "http://localhost:5027/api/lighter";
+    private const string ToggleUri = "http://localhost:5027/api/lighter/toggle";
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    protected override async void OnInitialized()
+    {
+        await FetchData();
+
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("http://localhost:5027/stateHub"))
+            .Build();
+
+        _hubConnection.On<LightData>("StatusUpdated", HandleStatusChanged);
+
+        await _hubConnection.StartAsync();
+    }
+
+    private void HandleStatusChanged(LightData newStatus)
+    {
+        this._lightData = newStatus;
+        StateHasChanged();
+    }
+
+
+    private async Task FetchData()
+    {
+        try
+        {
+            this._lightData = await Http.GetFromJsonAsync<LightData>(StatusUri);
+            StateHasChanged();
+        }
+        catch (Exception e)
+        {
+            this._httpResponseError = true;
+            this._error = e.Message;
+        }
+    }
+
+
+    private async Task ToggleStatus()
+    {
+        try
+        {
+            var responseMessage = await Http.PostAsync(ToggleUri, null);
+
+            if (responseMessage.IsSuccessStatusCode)
+            {
+                var jsonContent = await responseMessage.Content.ReadAsStringAsync();
+                this._lightData = JsonSerializer.Deserialize<LightData?>(
+                    jsonContent, 
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                StateHasChanged();
+            }
+            
+        }
+        catch (Exception e)
+        {
+            this._httpResponseError = true;
+            this._error = e.Message;
+        }
+    }
+
+    private string GetCircleColor()
+    {
+        return this._lightData!.LightStatus switch
+        {
+            LightStatus.LightOn => "yellow",
+            LightStatus.LightOff => "black",
+            _ => throw new ArgumentOutOfRangeException()
+        };
+    }
+}
